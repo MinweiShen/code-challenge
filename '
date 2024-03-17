@@ -1,0 +1,106 @@
+const ROW = 30;
+const COLUMN = 50;
+const GRID_SIZE = 20;
+let dirty = false;
+
+class Grid {
+  constructor(row, column, initial) {
+    this.row = row;
+    this.column = column;
+    this.grid = [];
+    for (let i = 0; i < row; i++) {
+      const r = new Array(column).fill(0);
+      this.grid.push(r);
+    }
+    this.c = this.createCanvas(COLUMN * GRID_SIZE, ROW * GRID_SIZE);
+  }
+
+  createCanvas(width, height) {
+    console.log("createCanvas");
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    document.body.appendChild(canvas);
+    return canvas;
+  }
+
+  set(row, column, state) {
+    if (row >= 0 && row < this.row && column >= 0 && column < this.column) {
+      dirty = true;
+      this.grid[row][column] = state;
+    } else {
+      console.warn(`${row} ${column} is out of boundary`);
+    }
+  }
+
+  draw() {
+    const ctx = this.c.getContext("2d");
+    ctx.lineWidth = 0.3;
+    for (let i = 0; i < this.row; i++) {
+      for (let j = 0; j < this.column; j++) {
+        if (this.grid[i][j] > 0) {
+          console.log(i, j, ">0");
+          ctx.rect(j * GRID_SIZE, i * GRID_SIZE, GRID_SIZE, GRID_SIZE);
+          ctx.stroke();
+        }
+      }
+    }
+    dirty = false;
+  }
+
+  getCanvas() {
+    return this.c;
+  }
+
+  bindEvents() {
+    const rect = this.c.getBoundingClientRect();
+    let isDragging = false;
+    function logPosition(event) {
+      let mouseX, mouseY;
+      if (rect.left < event.clientX && event.clientX < rect.right) {
+        mouseX = event.clientX - rect.left;
+      }
+      if (rect.top < event.clientY && event.clientY < rect.bottom) {
+        mouseY = event.clientY - rect.top;
+      }
+
+      if (mouseX && mouseY) {
+        const state = 1;
+        const column = Math.floor(mouseX / GRID_SIZE);
+        const row = Math.floor(mouseY / GRID_SIZE);
+        console.log("mouse position", column, row);
+        this.set(row, column, state);
+      }
+    }
+    document.addEventListener("mousedown", () => {
+      isDragging = true;
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (isDragging) {
+        logPosition.bind(this)(e);
+      }
+    });
+
+    document.addEventListener("mouseup", () => {
+      isDragging = false;
+    });
+  }
+}
+
+function work(grid) {
+  if (!dirty) return;
+  grid.draw();
+  requestIdleCallback(() => {
+    work(grid);
+  });
+}
+function main() {
+  const grid = new Grid(ROW, COLUMN, 0);
+  grid.bindEvents();
+  grid.set(4, 5, 1);
+  requestIdleCallback(() => {
+    work(grid);
+  });
+}
+
+main();
