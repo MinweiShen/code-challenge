@@ -1,8 +1,10 @@
 const ROW = 200;
 const COLUMN = 400;
 const GRID_SIZE = 3;
+const UNIT = 5 * GRID_SIZE;
 const DROP_SIZE = 2;
-let hue = 0;
+const G = 10 * UNIT;
+let HUE = 30;
 let dirty = false;
 
 function HSBtoRGB(hue, saturation, brightness) {
@@ -52,19 +54,28 @@ class SafeBox {
     this.column = column;
     this.box = [];
     for (let i = 0; i < row; i++) {
-      const r = new Array(column).fill(-1);
+      const r = [];
+      for (let j = 0; j < column; j++) {
+        r.push({ hue: -1, v: 0, t: 0 });
+      }
       this.box.push(r);
     }
   }
-  set(row, column, state) {
-    if (
-      row >= 0 &&
-      row < this.row &&
-      column >= 0 &&
-      column < this.column &&
-      this.box[row][column] === -1
-    ) {
-      this.box[row][column] = state;
+  reset() {
+    for (let r = 0; r < this.row; r++) {
+      for (let c = 0; c < this.column; c++) {
+        this.box[r][c].hue = -1;
+        this.box[r][c].v = 0;
+        this.box[r][c].t = 0;
+      }
+    }
+  }
+
+  set(row, column, hue, v, t) {
+    if (this.isUpdatable(row, column)) {
+      this.box[row][column].hue = hue;
+      this.box[row][column].v = v;
+      this.box[row][column].t = t;
       return true;
     }
 
@@ -75,7 +86,17 @@ class SafeBox {
     if (row >= 0 && row < this.row && column >= 0 && column < this.column) {
       return this.box[row][column];
     }
-    return -1;
+    return { hue: -1, v: 0, t: 0 };
+  }
+
+  isUpdatable(row, column) {
+    return (
+      row >= 0 &&
+      row < this.row &&
+      column >= 0 &&
+      column < this.column &&
+      this.box[row][column].hue === -1
+    );
   }
 }
 
@@ -84,11 +105,12 @@ class Grid {
     this.row = row;
     this.column = column;
     this.grid = new SafeBox(row, column);
+    this.wipGrid = new SafeBox(row, column);
     this.c = createCanvas(COLUMN * GRID_SIZE, ROW * GRID_SIZE);
   }
 
-  set(row, column, state) {
-    const result = this.grid.set(row, column, state);
+  set(row, column, hue, v, t) {
+    const result = this.grid.set(row, column, hue, v, t);
     if (result) {
       dirty = true;
     }
@@ -104,7 +126,7 @@ class Grid {
 
     for (let i = 0; i < this.row; i++) {
       for (let j = 0; j < this.column; j++) {
-        const hue = this.grid.get(i, j);
+        const { hue } = this.grid.get(i, j);
         if (hue > 0) {
           const rgbColor = HSBtoRGB(hue, 100, 100);
           ctx.fillStyle = `rgb(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b})`;
@@ -116,31 +138,60 @@ class Grid {
   }
 
   update() {
-    const newGrid = new SafeBox(this.row, this.column);
+    this.wipGrid.reset();
+    const now = Date.now();
 
-    for (let i = this.row - 1; i >= 0; i--) {
-      for (let j = this.column - 1; j >= 0; j--) {
-        const hue = this.grid.get(i, j);
-        if (hue > 0) {
-          if (newGrid.set(i + 1, j, hue)) {
-            dirty = true;
-            continue;
-          }
-          const direction = Math.random() < 0.5 ? 1 : -1;
-          if (newGrid.set(i + 1, j + direction, hue)) {
-            dirty = true;
-            continue;
-          }
-          if (newGrid.set(i + 1, j - direction, hue)) {
-            dirty = true;
-            continue;
-          }
-          newGrid.set(i, j, hue);
+    for (let r = this.row - 1; r >= 0; r--) {
+      for (let c = this.column - 1; c >= 0; c--) {
+        const { hue, v, t } = this.grid.get(r, c);
+
+        if (hue === -1) continue;
+
+        const isUpdatable =
+          this.wipGrid.isUpdatable(r + 1, c) ||
+          this.wipGrid.isUpdatable(r + 1, c - 1) ||
+          this.wipGrid.isUpdatable(r + 1, c + 1);
+
+        if (!isUpdatable) {
+          this.wipGrid.set(r, c, hue, v, t);
+          continue;
         }
+
+        const dt = (now - t) / 1000;
+        const newV = v + G * dt;
+        const ds = Math.floor(v * dt + 0.5 * G * dt * dt);
+        if (ds === 0) {
+          // remain where it is
+          this.wipGrid.set(r, c, hue, v, t);
+          continue;
+        }
+        let stop = false;
+        for (let d = ds; d >= 1; d--) {
+          if (this.wipGrid.set(r + d, c, hue, newV, now)) {
+            stop = true;
+            break;
+          }
+        }
+        if (stop) {
+          dirty = true;
+          continue;
+        }
+        const direction = Math.random() < 0.5 ? 1 : -1;
+        if (this.wipGrid.set(r + 1, c + direction, hue, v, now)) {
+          dirty = true;
+          continue;
+        }
+        if (this.wipGrid.set(r + 1, c - direction, hue, v, now)) {
+          dirty = true;
+          continue;
+        }
+        this.wipGrid.set(r, c, hue, 0, t);
       }
     }
 
-    this.grid = newGrid;
+    const tmp = this.grid;
+    this.grid = this.wipGrid;
+    this.wipGrid = tmp;
   }
 
   bindEvents() {
@@ -158,14 +209,14 @@ class Grid {
       if (mouseX && mouseY) {
         const column = Math.floor(mouseX / GRID_SIZE);
         const row = Math.floor(mouseY / GRID_SIZE);
+        const now = Date.now();
         for (let i = row - DROP_SIZE; i < row + DROP_SIZE; i++) {
           for (let j = column - DROP_SIZE; j < column + DROP_SIZE; j++) {
             if (Math.random() < 0.5) {
-              this.set(i, j, hue);
+              this.set(i, j, HUE, 0, now);
             }
           }
         }
-        hue = (hue + 1) % 360;
       }
     }
     document.addEventListener("mousedown", () => {
@@ -178,6 +229,10 @@ class Grid {
     });
 
     document.addEventListener("mouseup", () => {
+      HUE += 5;
+      if (HUE > 50) {
+        HUE = 30;
+      }
       isDragging = false;
     });
   }
@@ -196,6 +251,11 @@ function work(grid) {
 function main() {
   const grid = new Grid(ROW, COLUMN);
   grid.bindEvents();
+  for (let r = 0; r < ROW; r++) {
+    const rgbColor = HSBtoRGB(r, 100, 100);
+    const style = `color: rgb(${rgbColor.r}, ${rgbColor.g}, ${rgbColor.b})`;
+    console.log(`%c hue ${r}`, `${style}`);
+  }
   requestIdleCallback(() => {
     work(grid);
   });
